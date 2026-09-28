@@ -194,6 +194,30 @@ class WhatsAppMessage(Document):
         elif not self.message_id:
             self.send_template()
 
+    def _detect_named_format(self, template):
+        """
+        Detecta si el template usa variables nombradas o posicionales.
+        
+        Variables nombradas: {{nombre}}, {{asesor}}
+        Variables posicionales: {{1}}, {{2}}
+        """
+        import re
+        
+        body = template.template or ""
+        
+        # Buscar variables nombradas (solo minúsculas y guiones bajos)
+        named_pattern = r"\{\{([a-z][a-z0-9_]*)\}\}"
+        has_named = bool(re.search(named_pattern, body))
+        
+        # Buscar variables posicionales
+        positional_pattern = r"\{\{(\d+)\}\}"
+        has_positional = bool(re.search(positional_pattern, body))
+        
+        if has_named and has_positional:
+            frappe.throw("Template no puede mezclar variables nombradas y posicionales")
+        
+        return has_named
+
     def send_template(self):
         """Send template."""
         template = frappe.get_doc("WhatsApp Templates", self.template)
@@ -210,14 +234,32 @@ class WhatsAppMessage(Document):
 
         parameters = []
         template_parameters = []
-        if template.sample_values:
+        
+        # Detectar formato de variables (NAMED vs POSICIONAL)
+        is_named_format = self._detect_named_format(template)
+        
+        if template.sample_values or self.body_param:
             field_names = template.field_names.split(",") if template.field_names else template.sample_values.split(",")
 
             if self.body_param is not None:
-                params = list(json.loads(self.body_param).values())
-                for param in params:
-                    parameters.append({"type": "text", "text": param})
-                    template_parameters.append(param)
+                body_data = json.loads(self.body_param)
+                
+                if is_named_format:
+                    # Formato NAMED: usar parameter_name
+                    for var_name, var_value in body_data.items():
+                        parameters.append({
+                            "type": "text",
+                            "parameter_name": var_name,
+                            "text": str(var_value)
+                        })
+                        template_parameters.append(str(var_value))
+                else:
+                    # Formato POSICIONAL: usar valores en orden
+                    params = list(body_data.values())
+                    for param in params:
+                        parameters.append({"type": "text", "text": param})
+                        template_parameters.append(param)
+                        
             elif self.flags.custom_ref_doc:
                 custom_values = self.flags.custom_ref_doc
                 for field_name in field_names:
