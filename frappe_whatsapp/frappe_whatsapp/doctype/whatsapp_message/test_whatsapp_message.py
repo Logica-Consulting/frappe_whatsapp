@@ -322,6 +322,7 @@ class TestWhatsAppMessage(IntegrationTestCase):
         from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message import WhatsAppMessage
 
         message = frappe.new_doc("WhatsApp Message")
+        message.to = "+521234567890"
         message.template = "named-template"
         message.body_param = '{"first_name":"Ada"}'
         template = frappe._dict({

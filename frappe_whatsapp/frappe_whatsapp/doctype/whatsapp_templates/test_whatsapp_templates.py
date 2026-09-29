@@ -164,7 +164,13 @@ class TestWhatsAppTemplates(IntegrationTestCase):
         doc.named_field_mapping = '{"first_name":"customer_name"}'
         doc.named_example_values = '{"first_name":"Ada"}'
         doc.id = "existing_template_id"
-        with patch.object(WhatsAppTemplates, "get_settings"):
+        
+        def mock_get_settings(self):
+            self._url = "https://graph.facebook.com"
+            self._version = "v17.0"
+            self._headers = {"authorization": "Bearer test_token"}
+        
+        with patch.object(WhatsAppTemplates, "get_settings", mock_get_settings):
             doc.update_template()
 
         sent_data = json.loads(mock_post.call_args.kwargs["data"])

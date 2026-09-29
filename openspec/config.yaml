@@ -1,0 +1,48 @@
+schema: spec-driven
+
+context: |
+  Project: frappe_whatsapp, a Frappe Framework application extending ERPNext/Frappe with WhatsApp Cloud API integration.
+  Stack: Python package (Python >=3.10) with Frappe DocTypes, hooks, patches, and JavaScript assets.
+  Testing: CI provisions a Frappe bench, MariaDB, and Redis, then runs the app test suite; no standalone root test command is configured.
+  Style: Follow existing Frappe conventions; CI also runs Pylint over tracked Python files.
+
+strict_tdd: false
+
+projects:
+  - path: .
+    stack: Python 3.10+ / Frappe Framework
+    test_command: "bench --site test_site run-tests --app frappe_whatsapp (from initialized bench; CI only)"
+    framework: Frappe test runner
+    test_layers:
+      unit: "Frappe app tests under frappe_whatsapp/frappe_whatsapp/tests"
+      integration: "Frappe bench + MariaDB + Redis required by CI"
+      e2e: unavailable
+    coverage: unavailable
+    quality_tools:
+      - tool: Pylint
+        command: "pylint $(git ls-files '*.py') (CI workflow)"
+      - tool: Type checker
+        command: unavailable
+      - tool: Formatter
+        command: unavailable
+
+rules:
+  proposal:
+    - State the user-visible outcome, scope, constraints, and rollback considerations where relevant.
+  specs:
+    - Use Given/When/Then scenarios and RFC 2119 requirement language.
+  design:
+    - Follow Frappe application conventions and document non-obvious decisions.
+  tasks:
+    - Group implementation into bounded, verifiable work units.
+  apply:
+    guidelines:
+      - Follow existing Frappe patterns and preserve supported Frappe versions.
+    tdd: false
+    test_command: "bench --site test_site run-tests --app frappe_whatsapp (requires initialized Frappe bench and services)"
+  verify:
+    test_command: "bench --site test_site run-tests --app frappe_whatsapp (requires initialized Frappe bench and services)"
+    build_command: unavailable
+    coverage_threshold: 0
+  archive:
+    - Preserve the change artifacts as an audit trail.

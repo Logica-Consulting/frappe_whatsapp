@@ -315,19 +315,14 @@ class TestWhatsAppNotification(IntegrationTestCase):
         mock_notify.assert_not_called()
 
     @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.safe_exec")
-    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.frappe.db.get_value")
     @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.WhatsAppNotification.notify")
     def test_scheduled_contact_route_rejects_named_template_before_dispatch(
-        self, mock_notify, mock_get_value, _safe_exec
+        self, mock_notify, _safe_exec
     ):
         template = self._ensure_named_template()
         notification = frappe.new_doc("WhatsApp Notification")
         notification.template = template.name
         notification._contact_list = ["919900112233"]
-        mock_get_value.return_value = frappe._dict(
-            parameter_format="NAMED",
-            language_code="en",
-        )
 
         with self.assertRaises(frappe.ValidationError):
             notification.send_scheduled_message()

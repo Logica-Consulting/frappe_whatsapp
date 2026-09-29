@@ -251,7 +251,8 @@ class WhatsAppMessage(Document):
                 frappe.throw("Positional body values contain unknown key(s): " + ", ".join(extra))
         else:
             # Keep the existing positional field-value source, but align it with numeric placeholder order.
-            field_names = template.field_names.split(",") if template.field_names else template.sample_values.split(",")
+            field_names = (template.field_names or template.sample_values or "").split(",")
+            field_names = [name.strip() for name in field_names if name.strip()]
             if len(field_names) != len(identities):
                 frappe.throw("Legacy positional fields do not match the template placeholder indexes.")
             if self.flags.custom_ref_doc:
