@@ -174,8 +174,16 @@ class WhatsAppTemplates(Document):  # nosemgrep: frappe-modifying-but-not-commit
             self.get_session_id(self.sample)
             self.get_media_id(self.sample)
 
-        if not self.is_new():
+        if not self.is_new() and self._requires_remote_sync():
             self.update_template()
+
+    def _requires_remote_sync(self):
+        """Return True if any changed field requires syncing with Meta."""
+        remote_sync_fields = [
+            "template", "header_type", "header", "footer", "language",
+            "category", "status", "sample", "buttons"
+        ]
+        return any(self.has_value_changed(field) for field in remote_sync_fields)
 
     def set_whatsapp_account(self):
         """Set whatsapp account to default if missing"""
