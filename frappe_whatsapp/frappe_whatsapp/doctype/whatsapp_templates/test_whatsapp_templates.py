@@ -81,6 +81,98 @@ class TestWhatsAppTemplates(IntegrationTestCase):
         doc = self._make_template_without_hooks(template_name="test_tmpl_autoname")
         self.assertEqual(doc.name, "test_tmpl_autoname-en")
 
+    def test_named_placeholder_contract_collapses_repeated_variables(self):
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import (
+            body_parameter_identities,
+        )
+
+        self.assertEqual(
+            body_parameter_identities("Hi {{first_name}}, welcome {{first_name}}", "NAMED"),
+            ["first_name"],
+        )
+        self.assertEqual(body_parameter_identities("{{2}} then {{1}}", "POSITIONAL"), ["1", "2"])
+
+    def test_parameter_format_defaults_legacy_to_positional_without_writeback(self):
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import (
+            effective_parameter_format,
+        )
+
+        self.assertEqual(effective_parameter_format(""), "POSITIONAL")
+
+    def test_named_template_rejects_duplicate_json_keys_and_missing_examples(self):
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import (
+            validate_template_parameter_data,
+        )
+
+        doc = frappe._dict({
+            "parameter_format": "NAMED",
+            "template": "Hi {{first_name}}",
+            "named_field_mapping": '{"first_name":"customer","first_name":"name"}',
+            "named_example_values": '{"first_name":"Ada"}',
+            "sample_values": "Legacy value",
+        })
+        with self.assertRaises(frappe.ValidationError):
+            validate_template_parameter_data(doc)
+
+        doc.named_field_mapping = "{}"
+        doc.named_example_values = "{}"
+        with self.assertRaises(frappe.ValidationError):
+            validate_template_parameter_data(doc)
+
+        doc.named_field_mapping = "{"
+        doc.named_example_values = '{"first_name":"Ada"}'
+        with self.assertRaises(frappe.ValidationError):
+            validate_template_parameter_data(doc)
+
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates.make_post_request")
+    def test_after_insert_named_template_sends_named_body_examples(self, mock_post):
+        mock_post.return_value = {"id": "tmpl_named_id", "status": "PENDING"}
+        doc = frappe.get_doc({
+            "doctype": "WhatsApp Templates",
+            "template_name": "test_tmpl_named",
+            "template": "Hi {{first_name}}, hello {{first_name}}",
+            "parameter_format": "NAMED",
+            "named_field_mapping": '{"first_name":"customer_name"}',
+            "named_example_values": '{"first_name":"Ada"}',
+            "sample_values": "Legacy positional data",
+            "category": "TRANSACTIONAL",
+            "language": frappe.db.get_value("Language", {"language_code": "en"}) or "en",
+            "language_code": "en",
+            "whatsapp_account": "Test WA Tmpl Account",
+        })
+        doc.insert(ignore_permissions=True)
+
+        sent_data = json.loads(mock_post.call_args.kwargs["data"])
+        body = next(component for component in sent_data["components"] if component["type"] == "BODY")
+        self.assertEqual(sent_data["parameter_format"], "NAMED")
+        self.assertEqual(body["example"]["body_text_named_params"], [
+            {"param_name": "first_name", "example": "Ada"}
+        ])
+        self.assertEqual(doc.sample_values, "Legacy positional data")
+
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates.make_post_request")
+    def test_update_template_uses_named_body_examples(self, mock_post):
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import (
+            WhatsAppTemplates,
+        )
+
+        doc = self._make_template_without_hooks(
+            template_name="test_tmpl_named_update",
+            template="Hi {{first_name}}",
+        )
+        doc.parameter_format = "NAMED"
+        doc.named_field_mapping = '{"first_name":"customer_name"}'
+        doc.named_example_values = '{"first_name":"Ada"}'
+        doc.id = "existing_template_id"
+        with patch.object(WhatsAppTemplates, "get_settings"):
+            doc.update_template()
+
+        sent_data = json.loads(mock_post.call_args.kwargs["data"])
+        body = next(component for component in sent_data["components"] if component["type"] == "BODY")
+        self.assertEqual(body["example"]["body_text_named_params"], [
+            {"param_name": "first_name", "example": "Ada"}
+        ])
+
     @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates.make_post_request")
     def test_language_code_set_on_validate(self, mock_post):
         """Test language_code is derived from language field on validate."""
@@ -271,9 +363,9 @@ class TestWhatsAppTemplates(IntegrationTestCase):
                     "status": "APPROVED",
                     "language": "en",
                     "category": "UTILITY",
-                    "id": "fetched_tmpl_id",
-                    "components": [
-                        {"type": "BODY", "text": "Hello {{1}}, your order is ready"},
+                        "id": "fetched_tmpl_id",
+                        "components": [
+                        {"type": "BODY", "text": "Hello {{1}}, your order is ready", "example": {"body_text": [["Ada"]]}},
                         {"type": "FOOTER", "text": "Thank you"},
                     ]
                 }
@@ -296,3 +388,71 @@ class TestWhatsAppTemplates(IntegrationTestCase):
 
         doc.reload()
         self.assertEqual(doc.template, "Updated body text")
+
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates.frappe.get_all")
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates.make_request")
+    @patch("frappe.model.document.Document.get_password", return_value="mock_token")
+    def test_fetch_preserves_named_mapping_when_remote_variables_reorder(self, _password, mock_request, mock_get_all):
+        doc = self._make_template_without_hooks(
+            template_name="test_tmpl_fetch_named",
+            template="Hi {{first_name}} {{order_id}}",
+        )
+        frappe.db.set_value("WhatsApp Templates", doc.name, {
+            "parameter_format": "NAMED",
+            "named_field_mapping": '{"first_name":"customer","order_id":"name"}',
+            "for_doctype": "Sales Order",
+        })
+        mock_get_all.return_value = [frappe._dict(name="Test WA Tmpl Account")]
+        mock_request.return_value = {"data": [{
+            "name": doc.actual_name,
+            "status": "APPROVED",
+            "language": "en",
+            "category": "UTILITY",
+            "id": "remote_named_template",
+            "parameter_format": "NAMED",
+            "components": [{
+                "type": "BODY",
+                "text": "{{order_id}} for {{first_name}}",
+                "example": {"body_text_named_params": [
+                    {"param_name": "order_id", "example": "SO-1"},
+                    {"param_name": "first_name", "example": "Ada"},
+                ]},
+            }],
+        }]}
+
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import fetch
+        result = fetch()
+        doc.reload()
+
+        self.assertEqual(result, "Successfully fetched templates from meta")
+        self.assertEqual(doc.parameter_format, "NAMED")
+        self.assertEqual(doc.for_doctype, "Sales Order")
+        self.assertEqual(json.loads(doc.named_field_mapping), {"first_name": "customer", "order_id": "name"})
+        self.assertEqual(json.loads(doc.named_example_values), {"first_name": "Ada", "order_id": "SO-1"})
+
+    def test_parse_remote_named_body_rejects_duplicate_and_inconsistent_examples(self):
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import parse_remote_body
+
+        remote = {
+            "parameter_format": "NAMED",
+            "components": [{
+                "type": "BODY",
+                "text": "{{first_name}}",
+                "example": {"body_text_named_params": [
+                    {"param_name": "first_name", "example": "Ada"},
+                    {"param_name": "first_name", "example": "Grace"},
+                ]},
+            }],
+        }
+        with self.assertRaises(frappe.ValidationError):
+            parse_remote_body(remote)
+
+        remote["components"][0]["example"]["body_text_named_params"] = [
+            {"param_name": "other_name", "example": "Ada"},
+        ]
+        with self.assertRaises(frappe.ValidationError):
+            parse_remote_body(remote)
+
+        remote["parameter_format"] = "UNKNOWN"
+        with self.assertRaises(frappe.ValidationError):
+            parse_remote_body(remote)

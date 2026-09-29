@@ -256,6 +256,90 @@ class TestWhatsAppMessage(IntegrationTestCase):
         self.assertEqual(doc.format_number("+919900112233"), "919900112233")
         self.assertEqual(doc.format_number("919900112233"), "919900112233")
 
+    def test_named_body_parameters_follow_template_identity_order(self):
+        message = frappe.new_doc("WhatsApp Message")
+        message.body_param = '{"order_id":"SO-1","first_name":"Ada"}'
+        template = frappe._dict({
+            "parameter_format": "NAMED",
+            "template": "Hi {{first_name}}; order {{order_id}}; hi {{first_name}}",
+        })
+
+        parameters, values = message._prepare_body_parameters(template)
+
+        self.assertEqual(parameters, [
+            {"type": "text", "parameter_name": "first_name", "text": "Ada"},
+            {"type": "text", "parameter_name": "order_id", "text": "SO-1"},
+        ])
+        self.assertEqual(values, ["Ada", "SO-1"])
+
+    def test_send_template_serializes_template_parameters_in_body_order(self):
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message import WhatsAppMessage
+
+        message = frappe.new_doc("WhatsApp Message")
+        message.template = "named-template"
+        message.to = "919900112233"
+        message.body_param = '{"order_id":"SO-1","first_name":"Ada"}'
+        template = frappe._dict({
+            "parameter_format": "NAMED",
+            "template": "{{first_name}} {{order_id}} {{first_name}}",
+            "actual_name": "named_template",
+            "template_name": "named_template",
+            "language_code": "en",
+            "header_type": "",
+            "sample": "",
+            "buttons": [],
+            "product_catalog_json": "",
+        })
+        with patch("frappe.get_doc", return_value=template), patch.object(WhatsAppMessage, "notify") as notify:
+            message.send_template()
+
+        self.assertEqual(json.loads(message.template_parameters), ["Ada", "SO-1"])
+        payload = notify.call_args.args[0]
+        self.assertEqual(payload["template"]["components"][0]["parameters"], [
+            {"type": "text", "parameter_name": "first_name", "text": "Ada"},
+            {"type": "text", "parameter_name": "order_id", "text": "SO-1"},
+        ])
+
+    def test_positional_body_parameters_follow_numeric_placeholder_order(self):
+        message = frappe.new_doc("WhatsApp Message")
+        message.body_param = '{"2":"second","1":"first"}'
+        template = frappe._dict({
+            "parameter_format": "POSITIONAL",
+            "template": "{{2}} {{1}}",
+            "field_names": "",
+            "sample_values": "",
+        })
+
+        parameters, values = message._prepare_body_parameters(template)
+
+        self.assertEqual(values, ["first", "second"])
+        self.assertEqual(parameters, [
+            {"type": "text", "text": "first"},
+            {"type": "text", "text": "second"},
+        ])
+
+    def test_incomplete_named_body_values_fail_before_notify(self):
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message import WhatsAppMessage
+
+        message = frappe.new_doc("WhatsApp Message")
+        message.template = "named-template"
+        message.body_param = '{"first_name":"Ada"}'
+        template = frappe._dict({
+            "parameter_format": "NAMED",
+            "template": "{{first_name}} {{order_id}}",
+            "actual_name": "named_template",
+            "template_name": "named_template",
+            "language_code": "en",
+            "header_type": "",
+            "sample_values": "",
+            "field_names": "",
+            "buttons": [],
+        })
+        with patch("frappe.get_doc", return_value=template), patch.object(WhatsAppMessage, "notify") as notify:
+            with self.assertRaises(frappe.ValidationError):
+                message.send_template()
+        notify.assert_not_called()
+
     @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message.make_post_request")
     def test_send_read_receipt(self, mock_post):
         """Test sending a read receipt."""

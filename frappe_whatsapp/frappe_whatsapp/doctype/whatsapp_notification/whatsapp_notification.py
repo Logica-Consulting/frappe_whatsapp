@@ -11,6 +11,7 @@ from frappe.desk.form.utils import get_pdf_link
 from frappe.utils import add_to_date, nowdate, datetime
 
 from frappe_whatsapp.utils import get_whatsapp_account
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import effective_parameter_format
 
 
 class WhatsAppNotification(Document):
@@ -70,6 +71,8 @@ class WhatsAppNotification(Document):
 
     def send_simple_template(self, template):
         """ send simple template without a doc to get field data """
+        if effective_parameter_format(template.get("parameter_format")) == "NAMED":
+            frappe.throw(_("Named templates are not supported by WhatsApp Notification; use WhatsApp Message instead."))
         for contact in self._contact_list:
             data = {
                 "messaging_product": "whatsapp",
@@ -92,6 +95,10 @@ class WhatsAppNotification(Document):
         if self.disabled:
             return
 
+        template = default_template or frappe.get_doc("WhatsApp Templates", self.template)
+        if template and effective_parameter_format(template.get("parameter_format")) == "NAMED":
+            frappe.throw(_("Named templates are not supported by WhatsApp Notification; use WhatsApp Message instead."))
+
         doc_data = doc.as_dict()
         if self.condition and not ignore_condition:
             # check if condition satisfies
@@ -99,8 +106,6 @@ class WhatsAppNotification(Document):
                 self.condition, get_safe_globals(), dict(doc=doc_data)
             ):
                 return
-
-        template = default_template or frappe.get_doc("WhatsApp Templates", self.template)
 
         if template:
             if self.field_name:

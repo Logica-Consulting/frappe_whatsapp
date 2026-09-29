@@ -3,6 +3,7 @@
 # Copyright (c) 2022, Shridhar Patil and contributors
 # For license information, please see license.txt
 import json
+import re
 import frappe
 import magic
 import requests
@@ -12,10 +13,158 @@ from frappe.desk.form.utils import get_pdf_link
 
 from frappe_whatsapp.utils import get_whatsapp_account
 
+
+NAMED_PLACEHOLDER = re.compile(r"{{([A-Za-z][A-Za-z0-9_]*)}}")
+POSITIONAL_PLACEHOLDER = re.compile(r"{{([1-9][0-9]*)}}")
+
+
+def _json_object(value, label):
+    """Decode an optional JSON object, preserving duplicate-key errors."""
+    if not value:
+        return {}
+
+    def reject_duplicates(pairs):
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                frappe.throw(f"{label} contains duplicate key '{key}'.")
+            result[key] = item
+        return result
+
+    try:
+        result = json.loads(value, object_pairs_hook=reject_duplicates)
+    except (TypeError, json.JSONDecodeError) as exc:
+        frappe.throw(f"{label} must contain valid JSON: {exc}")
+    if not isinstance(result, dict) or not all(isinstance(key, str) for key in result):
+        frappe.throw(f"{label} must be a JSON object with string keys.")
+    return result
+
+
+def effective_parameter_format(value):
+    """Treat empty legacy formats as positional without mutating the record."""
+    parameter_format = (value or "POSITIONAL").upper()
+    if parameter_format not in ("POSITIONAL", "NAMED"):
+        frappe.throw(f"Unsupported template parameter format '{value}'.")
+    return parameter_format
+
+
+def body_parameter_identities(body, parameter_format):
+    """Return unique parameter identities in body order and reject malformed tokens."""
+    parameter_format = effective_parameter_format(parameter_format)
+    matcher = NAMED_PLACEHOLDER if parameter_format == "NAMED" else POSITIONAL_PLACEHOLDER
+    identities = matcher.findall(body or "")
+    residue = matcher.sub("", body or "")
+    if "{{" in residue or "}}" in residue:
+        frappe.throw(f"Template body contains a malformed {parameter_format.lower()} placeholder.")
+    if parameter_format == "POSITIONAL":
+        indexes = [int(index) for index in identities]
+        unique = sorted(set(indexes))
+        if unique and unique != list(range(1, max(unique) + 1)):
+            frappe.throw("Positional placeholders must use contiguous indexes starting at {{1}}.")
+        return [str(index) for index in unique]
+    return list(dict.fromkeys(identities))
+
+
+def validate_template_parameter_data(template):
+    """Validate local format, placeholders, and name-keyed data before remote I/O."""
+    parameter_format = effective_parameter_format(template.parameter_format)
+    identities = body_parameter_identities(template.template, parameter_format)
+    if parameter_format == "NAMED":
+        mappings = _json_object(template.named_field_mapping, "Named field mapping")
+        examples = _json_object(template.named_example_values, "Named example values")
+        unknown_mappings = set(mappings) - set(identities)
+        if unknown_mappings:
+            frappe.throw("Named field mapping contains stale variable(s): " + ", ".join(sorted(unknown_mappings)))
+        unknown_examples = set(examples) - set(identities)
+        if unknown_examples:
+            frappe.throw("Named example values contain stale variable(s): " + ", ".join(sorted(unknown_examples)))
+        missing_examples = set(identities) - set(examples)
+        if missing_examples:
+            frappe.throw("Named example values are missing: " + ", ".join(name for name in identities if name in missing_examples))
+        if any(not isinstance(value, str) for value in mappings.values()):
+            frappe.throw("Named field mapping values must be strings.")
+        if any(not isinstance(value, str) or not value.strip() for value in examples.values()):
+            frappe.throw("Named example values must be non-empty strings.")
+    elif template.sample_values:
+        samples = template.sample_values.split(",")
+        if len(samples) != len(identities):
+            frappe.throw("Sample Values must provide one value for each positional placeholder.")
+    return parameter_format, identities
+
+
+def build_body_component(template):
+    """Build BODY component using the template's explicit format and examples."""
+    parameter_format, identities = validate_template_parameter_data(template)
+    body = {"type": "BODY", "text": template.template}
+    if parameter_format == "NAMED" and identities:
+        examples = _json_object(template.named_example_values, "Named example values")
+        body["example"] = {"body_text_named_params": [
+            {"param_name": name, "example": examples[name]} for name in identities
+        ]}
+    elif parameter_format == "POSITIONAL" and template.sample_values:
+        body["example"] = {"body_text": [template.sample_values.split(",")]}
+    return body
+
+
+def parse_remote_body(remote_template):
+    """Validate the remote BODY component and return locally persistable values."""
+    parameter_format = effective_parameter_format(remote_template.get("parameter_format"))
+    body_components = [c for c in remote_template.get("components", []) if c.get("type") == "BODY"]
+    if len(body_components) != 1:
+        frappe.throw("Remote template must contain exactly one BODY component.")
+    component = body_components[0]
+    body_text = component.get("text")
+    if not isinstance(body_text, str):
+        frappe.throw("Remote BODY component is missing text.")
+    identities = body_parameter_identities(body_text, parameter_format)
+    example = component.get("example") or {}
+
+    if parameter_format == "NAMED":
+        entries = example.get("body_text_named_params")
+        if not identities and not entries:
+            named_examples = {}
+        elif not isinstance(entries, list):
+            frappe.throw("Remote named BODY example is missing body_text_named_params.")
+        else:
+            named_examples = {}
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    frappe.throw("Remote named BODY example entries must be objects.")
+                name = entry.get("param_name")
+                value = entry.get("example")
+                if not isinstance(name, str) or not isinstance(value, str) or not value.strip():
+                    frappe.throw("Remote named BODY examples require param_name and non-empty example values.")
+                if name in named_examples:
+                    frappe.throw(f"Remote named BODY example contains duplicate variable '{name}'.")
+                named_examples[name] = value
+            if set(named_examples) != set(identities):
+                missing = [name for name in identities if name not in named_examples]
+                stale = sorted(set(named_examples) - set(identities))
+                details = []
+                if missing:
+                    details.append("missing: " + ", ".join(missing))
+                if stale:
+                    details.append("unexpected: " + ", ".join(stale))
+                frappe.throw("Remote named BODY examples do not match placeholders (" + "; ".join(details) + ").")
+        return parameter_format, body_text, "", json.dumps(named_examples, sort_keys=True)
+
+    positional = example.get("body_text")
+    if identities:
+        if not isinstance(positional, list) or not positional or not isinstance(positional[0], list):
+            frappe.throw("Remote positional BODY example is missing body_text values.")
+        values = positional[0]
+        if len(values) != len(identities) or any(not isinstance(value, str) for value in values):
+            frappe.throw("Remote positional BODY example values do not match placeholder indexes.")
+        sample_values = ",".join(values)
+    else:
+        sample_values = ",".join(positional[0]) if positional and isinstance(positional[0], list) else ""
+    return parameter_format, body_text, sample_values, ""
+
 class WhatsAppTemplates(Document):  # nosemgrep: frappe-modifying-but-not-committing-other-method -- get_settings() sets self._token/_url/_version/_business_id/_app_id/_headers as in-memory scratch for the outbound Meta HTTP call; they are not DocType fields and must not be persisted
     """Create whatsapp template."""
 
     def validate(self):
+        validate_template_parameter_data(self)
         self.set_whatsapp_account()
         if not self.language_code or self.has_value_changed("language"):
             lang_code = frappe.db.get_value("Language", self.language) or "en"
@@ -134,14 +283,8 @@ class WhatsAppTemplates(Document):  # nosemgrep: frappe-modifying-but-not-commit
             "components": [],
         }
 
-        body = {
-            "type": "BODY",
-            "text": self.template,
-        }
-        if self.sample_values:
-            body.update({"example": {"body_text": [self.sample_values.split(",")]}})
-
-        data["components"].append(body)
+        data["parameter_format"] = effective_parameter_format(self.parameter_format)
+        data["components"].append(build_body_component(self))
         if self.header_type:
             data["components"].append(self.get_header())
 
@@ -196,13 +339,7 @@ class WhatsAppTemplates(Document):  # nosemgrep: frappe-modifying-but-not-commit
         self.get_settings()
         data = {"components": []}
 
-        body = {
-            "type": "BODY",
-            "text": self.template,
-        }
-        if self.sample_values:
-            body.update({"example": {"body_text": [self.sample_values.split(",")]}})
-        data["components"].append(body)
+        data["components"].append(build_body_component(self))
         if self.header_type:
             data["components"].append(self.get_header())
         if self.footer:
@@ -304,6 +441,7 @@ def fetch():
     """Fetch templates from meta."""
     """Later improve this code to pass a whatsapp account remove the js funcation so that it is called from whatsapp account doctype """
     whatsapp_accounts = frappe.get_all('WhatsApp Account', filters={'status': 'Active'}, fields=['name', 'token', 'url', 'version', 'business_id'])
+    invalid_templates = []
 
     for account in whatsapp_accounts:
         # get credentials
@@ -322,6 +460,14 @@ def fetch():
             )
 
             for template in response["data"]:
+                try:
+                    parameter_format, body_text, sample_values, named_examples = parse_remote_body(template)
+                except Exception as exc:
+                    message = f"{template.get('name', '<unnamed>')}: {exc}"
+                    invalid_templates.append(message)
+                    frappe.log_error(message, "WhatsApp Template Import Validation")
+                    continue
+
                 # set flag to insert or update
                 flags = 1
                 if frappe.db.exists("WhatsApp Templates", {"actual_name": template["name"]}):
@@ -337,6 +483,32 @@ def fetch():
                 doc.category = template["category"]
                 doc.id = template["id"]
                 doc.whatsapp_account = account.name
+                if template.get("parameter_format"):
+                    doc.parameter_format = parameter_format
+                elif doc.parameter_format == "NAMED":
+                    doc.parameter_format = "POSITIONAL"
+                doc.template = body_text
+                if parameter_format == "POSITIONAL":
+                    doc.sample_values = sample_values
+                else:
+                    doc.named_example_values = named_examples
+
+                if flags and parameter_format == "NAMED" and doc.named_field_mapping:
+                    try:
+                        local_mappings = _json_object(doc.named_field_mapping, "Named field mapping")
+                        current_names = body_parameter_identities(body_text, parameter_format)
+                        stale = sorted(set(local_mappings) - set(current_names))
+                        if stale:
+                            message = (
+                                f"{template['name']}: retained stale local named mapping(s): "
+                                + ", ".join(stale)
+                            )
+                            invalid_templates.append(message)
+                            frappe.log_error(message, "WhatsApp Template Import Validation")
+                    except Exception as exc:
+                        message = f"{template['name']}: retained invalid local named mapping: {exc}"
+                        invalid_templates.append(message)
+                        frappe.log_error(message, "WhatsApp Template Import Validation")
 
                 # update components
                 for component in template["components"]:
@@ -354,13 +526,8 @@ def fetch():
 
                     # update template text
                     elif component["type"] == "BODY":
-                        doc.template = component["text"]
-                        if component.get("example"):
-    			            # Check if 'body_text' exists before trying to access it
-                            if component["example"].get("body_text"):
-                                doc.sample_values = ",".join(
-            	                    component["example"]["body_text"][0]
-                    	        )
+                        # The body and its examples were validated before mutating this document.
+                        continue
 
                     # Update buttons
                     elif component["type"] == "BUTTONS":
@@ -404,6 +571,8 @@ def fetch():
 
                 upsert_doc_without_hooks(doc, "WhatsApp Button", "buttons")
 
+            if invalid_templates:
+                return "Fetched templates with invalid state: " + " | ".join(invalid_templates)
             return "Successfully fetched templates from meta"
 
         except Exception as e:

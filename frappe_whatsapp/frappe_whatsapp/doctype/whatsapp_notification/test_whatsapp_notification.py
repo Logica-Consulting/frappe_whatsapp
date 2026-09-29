@@ -91,6 +91,27 @@ class TestWhatsAppNotification(IntegrationTestCase):
         doc.insert(ignore_permissions=True)
         return doc
 
+    def _ensure_named_template(self):
+        name = "test_notif_named-en"
+        if not frappe.db.exists("WhatsApp Templates", name):
+            frappe.get_doc({
+                "doctype": "WhatsApp Templates",
+                "template_name": "test_notif_named",
+                "actual_name": "test_notif_named",
+                "template": "Hello {{first_name}}",
+                "parameter_format": "NAMED",
+                "named_example_values": '{"first_name":"Ada"}',
+                "category": "UTILITY",
+                "language": frappe.db.get_value("Language", {"language_code": "en"}) or "en",
+                "language_code": "en",
+                "whatsapp_account": "Test WA Notif Account",
+                "status": "APPROVED",
+                "id": "test_notif_named_id",
+                "name": name,
+            }).db_insert()
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- fixture is read by notification tests
+        return frappe.get_doc("WhatsApp Templates", name)
+
     def test_notification_creation(self):
         """Test basic notification creation."""
         doc = self._make_notification()
@@ -268,3 +289,47 @@ class TestWhatsAppNotification(IntegrationTestCase):
         doc.insert(ignore_permissions=True)
         self.assertEqual(doc.notification_type, "Scheduler Event")
         self.assertEqual(doc.event_frequency, "Daily")
+
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.WhatsAppNotification.notify")
+    def test_named_template_is_rejected_by_simple_notification_before_dispatch(self, mock_notify):
+        template = self._ensure_named_template()
+        notification = frappe.new_doc("WhatsApp Notification")
+        notification._contact_list = ["919900112233"]
+
+        with self.assertRaises(frappe.ValidationError):
+            notification.send_simple_template(template)
+
+        mock_notify.assert_not_called()
+
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.WhatsAppNotification.notify")
+    def test_named_template_is_rejected_by_dynamic_notification_before_dispatch(self, mock_notify):
+        template = self._ensure_named_template()
+        notification = self._make_notification(
+            notification_name="Test Notif Named Dynamic",
+            template=template.name,
+        )
+        user = frappe.get_doc("User", "Administrator")
+        with self.assertRaises(frappe.ValidationError):
+            notification.send_template_message(user, "919900112233")
+
+        mock_notify.assert_not_called()
+
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.safe_exec")
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.frappe.db.get_value")
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.WhatsAppNotification.notify")
+    def test_scheduled_contact_route_rejects_named_template_before_dispatch(
+        self, mock_notify, mock_get_value, _safe_exec
+    ):
+        template = self._ensure_named_template()
+        notification = frappe.new_doc("WhatsApp Notification")
+        notification.template = template.name
+        notification._contact_list = ["919900112233"]
+        mock_get_value.return_value = frappe._dict(
+            parameter_format="NAMED",
+            language_code="en",
+        )
+
+        with self.assertRaises(frappe.ValidationError):
+            notification.send_scheduled_message()
+
+        mock_notify.assert_not_called()

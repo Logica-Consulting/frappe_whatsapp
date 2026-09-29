@@ -15,6 +15,9 @@
   "section_break_fxqh",
   "template",
   "sample_values",
+  "parameter_format",
+  "named_field_mapping",
+  "named_example_values",
   "for_doctype",
   "field_names",
   "column_break_6",
@@ -115,6 +118,25 @@
    "fieldname": "sample_values",
    "fieldtype": "Small Text",
    "label": "Sample Values"
+  },
+  {
+   "default": "POSITIONAL",
+   "fieldname": "parameter_format",
+   "fieldtype": "Select",
+   "label": "Parameter Format",
+   "options": "POSITIONAL\nNAMED"
+  },
+  {
+   "fieldname": "named_field_mapping",
+   "fieldtype": "Code",
+   "label": "Named Field Mapping",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "named_example_values",
+   "fieldtype": "Code",
+   "label": "Named Example Values",
+   "options": "JSON"
   },
   {
    "fieldname": "column_break_bthp",

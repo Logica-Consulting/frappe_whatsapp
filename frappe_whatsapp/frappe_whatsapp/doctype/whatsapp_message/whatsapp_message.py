@@ -7,6 +7,10 @@ from frappe.model.document import Document
 from frappe.integrations.utils import make_post_request
 
 from frappe_whatsapp.utils import get_whatsapp_account, format_number
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import (
+    body_parameter_identities,
+    effective_parameter_format,
+)
 
 class WhatsAppMessage(Document):
     def validate(self):
@@ -194,29 +198,72 @@ class WhatsAppMessage(Document):
         elif not self.message_id:
             self.send_template()
 
-    def _detect_named_format(self, template):
-        """
-        Detecta si el template usa variables nombradas o posicionales.
-        
-        Variables nombradas: {{nombre}}, {{asesor}}
-        Variables posicionales: {{1}}, {{2}}
-        """
-        import re
-        
-        body = template.template or ""
-        
-        # Buscar variables nombradas (solo minúsculas y guiones bajos)
-        named_pattern = r"\{\{([a-z][a-z0-9_]*)\}\}"
-        has_named = bool(re.search(named_pattern, body))
-        
-        # Buscar variables posicionales
-        positional_pattern = r"\{\{(\d+)\}\}"
-        has_positional = bool(re.search(positional_pattern, body))
-        
-        if has_named and has_positional:
-            frappe.throw("Template no puede mezclar variables nombradas y posicionales")
-        
-        return has_named
+    def _prepare_body_parameters(self, template):
+        """Build deterministic body parameters using the stored format and body identities."""
+        parameter_format = effective_parameter_format(template.parameter_format)
+        identities = body_parameter_identities(template.template, parameter_format)
+        if not identities:
+            if self.body_param:
+                frappe.throw("This template has no body placeholders, but body values were supplied.")
+            return [], []
+
+        if parameter_format == "NAMED":
+            if not self.body_param:
+                frappe.throw("Named template values must be supplied by variable name before sending.")
+            try:
+                supplied = json.loads(self.body_param)
+            except (TypeError, json.JSONDecodeError) as exc:
+                frappe.throw(f"Body values must be a valid JSON object: {exc}")
+            if not isinstance(supplied, dict) or not all(isinstance(key, str) for key in supplied):
+                frappe.throw("Named body values must be a JSON object keyed by variable name.")
+            missing = [name for name in identities if name not in supplied or supplied[name] is None or not str(supplied[name]).strip()]
+            unknown = sorted(set(supplied) - set(identities))
+            if missing or unknown:
+                details = []
+                if missing:
+                    details.append("missing values: " + ", ".join(missing))
+                if unknown:
+                    details.append("unknown variables: " + ", ".join(unknown))
+                frappe.throw("Named body values are incomplete (" + "; ".join(details) + ").")
+            values = [str(supplied[name]) for name in identities]
+            return ([
+                {"type": "text", "parameter_name": name, "text": value}
+                for name, value in zip(identities, values)
+            ], values)
+
+        if self.body_param:
+            try:
+                supplied = json.loads(self.body_param)
+            except (TypeError, json.JSONDecodeError) as exc:
+                frappe.throw(f"Body values must be a valid JSON object: {exc}")
+            if not isinstance(supplied, dict):
+                frappe.throw("Positional body values must be a JSON object keyed by placeholder index.")
+            if all(identity in supplied for identity in identities):
+                values = [supplied[identity] for identity in identities]
+                extra = sorted(set(supplied) - set(identities))
+            else:
+                field_names = [name.strip() for name in (template.field_names or "").split(",") if name.strip()]
+                if len(field_names) != len(identities) or not all(name in supplied for name in field_names):
+                    frappe.throw("Positional body values must be keyed by placeholder index or configured field name.")
+                values = [supplied[name] for name in field_names]
+                extra = sorted(set(supplied) - set(field_names))
+            if extra:
+                frappe.throw("Positional body values contain unknown key(s): " + ", ".join(extra))
+        else:
+            # Keep the existing positional field-value source, but align it with numeric placeholder order.
+            field_names = template.field_names.split(",") if template.field_names else template.sample_values.split(",")
+            if len(field_names) != len(identities):
+                frappe.throw("Legacy positional fields do not match the template placeholder indexes.")
+            if self.flags.custom_ref_doc:
+                custom_values = self.flags.custom_ref_doc
+                values = [custom_values.get(field_name.strip()) for field_name in field_names]
+            else:
+                ref_doc = frappe.get_doc(self.reference_doctype, self.reference_name)
+                values = [ref_doc.get_formatted(field_name.strip()) for field_name in field_names]
+        if any(value is None for value in values):
+            frappe.throw("One or more positional template values are missing.")
+        values = [str(value) for value in values]
+        return ([{"type": "text", "text": value} for value in values], values)
 
     def send_template(self):
         """Send template."""
@@ -232,49 +279,8 @@ class WhatsAppMessage(Document):
             },
         }
 
-        parameters = []
-        template_parameters = []
-        
-        # Detectar formato de variables (NAMED vs POSICIONAL)
-        is_named_format = self._detect_named_format(template)
-        
-        if template.sample_values or self.body_param:
-            field_names = template.field_names.split(",") if template.field_names else template.sample_values.split(",")
-
-            if self.body_param is not None:
-                body_data = json.loads(self.body_param)
-                
-                if is_named_format:
-                    # Formato NAMED: usar parameter_name
-                    for var_name, var_value in body_data.items():
-                        parameters.append({
-                            "type": "text",
-                            "parameter_name": var_name,
-                            "text": str(var_value)
-                        })
-                        template_parameters.append(str(var_value))
-                else:
-                    # Formato POSICIONAL: usar valores en orden
-                    params = list(body_data.values())
-                    for param in params:
-                        parameters.append({"type": "text", "text": param})
-                        template_parameters.append(param)
-                        
-            elif self.flags.custom_ref_doc:
-                custom_values = self.flags.custom_ref_doc
-                for field_name in field_names:
-                    value = custom_values.get(field_name.strip())
-                    parameters.append({"type": "text", "text": value})
-                    template_parameters.append(value)                    
-
-            else:
-                ref_doc = frappe.get_doc(self.reference_doctype, self.reference_name)
-                for field_name in field_names:
-                    value = ref_doc.get_formatted(field_name.strip())
-                    parameters.append({"type": "text", "text": value})
-                    template_parameters.append(value)
-
-            self.template_parameters = json.dumps(template_parameters)
+        parameters, template_parameters = self._prepare_body_parameters(template)
+        self.template_parameters = json.dumps(template_parameters)
 
         # Always add the body component, even if parameters list is empty
         data["template"]["components"].append({
