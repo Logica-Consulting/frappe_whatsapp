@@ -142,7 +142,12 @@ class TestBulkWhatsAppMessage(IntegrationTestCase):
         mock_post.return_value = {
             "messages": [{"id": "wamid.bulk_single_1"}],
         }
-        doc = self._make_bulk_message(title="Test Bulk Single")
+        # Use a template without variables to avoid field mapping issues
+        doc = self._make_bulk_message(
+            title="Test Bulk Single",
+            use_template=0,
+            template=None,
+        )
 
         recipient = {
             "mobile_number": "919900112255",
