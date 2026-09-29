@@ -406,6 +406,7 @@ class TestWhatsAppMessage(IntegrationTestCase):
                 "whatsapp_account": "Test WA Msg Account",
                 "status": "APPROVED",
                 "id": "test_template_id_123",
+                "field_names": "first_name",
             }).db_insert()
             frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
 
