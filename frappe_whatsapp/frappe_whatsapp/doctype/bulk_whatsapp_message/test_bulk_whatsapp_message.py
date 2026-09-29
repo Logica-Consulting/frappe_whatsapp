@@ -150,6 +150,7 @@ class TestBulkWhatsAppMessage(IntegrationTestCase):
             "recipient_data": json.dumps({"name": "Single Test"}),
         }
         doc.create_single_message(recipient)
+        frappe.db.commit()
 
         self.assertTrue(
             frappe.db.exists("WhatsApp Message", {"to": "919900112255"})
