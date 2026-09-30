@@ -461,13 +461,19 @@ def fetch():
         headers = {"authorization": f"Bearer {token}", "content-type": "application/json"}
 
         try:
-            response = make_request(
-                "GET",
-                f"{url}/{version}/{business_id}/message_templates",
-                headers=headers,
-            )
+            # Paginate through all pages of templates from Meta.
+            next_url = f"{url}/{version}/{business_id}/message_templates"
+            seen_urls = set()
+            all_templates = []
 
-            for template in response["data"]:
+            while next_url and next_url not in seen_urls:
+                seen_urls.add(next_url)
+                response = make_request("GET", next_url, headers=headers)
+                all_templates.extend(response.get("data", []))
+                paging = response.get("paging") or {}
+                next_url = paging.get("next")
+
+            for template in all_templates:
                 try:
                     parameter_format, body_text, sample_values, named_examples = parse_remote_body(template)
                 except Exception as exc:

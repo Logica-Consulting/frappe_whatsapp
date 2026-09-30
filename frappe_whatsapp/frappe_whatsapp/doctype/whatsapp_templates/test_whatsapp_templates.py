@@ -436,6 +436,75 @@ class TestWhatsAppTemplates(IntegrationTestCase):
         self.assertEqual(json.loads(doc.named_field_mapping), {"first_name": "customer", "order_id": "name"})
         self.assertEqual(json.loads(doc.named_example_values), {"first_name": "Ada", "order_id": "SO-1"})
 
+    @patch("frappe.model.document.Document.get_password", return_value="mock_token")
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates.make_request")
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates.make_post_request")
+    def test_fetch_follows_pagination_to_import_all_pages(self, mock_post, mock_get, mock_get_password):
+        """Test that fetch() follows paging.next and imports templates from every page."""
+        page_two_url = "https://graph.facebook.com/v17.0/tmpl_test_business_id/message_templates?after=cursor_page2"
+
+        mock_get.side_effect = [
+            {
+                "data": [
+                    {
+                        "name": "test_tmpl_page1",
+                        "status": "APPROVED",
+                        "language": "en",
+                        "category": "UTILITY",
+                        "id": "page1_tmpl_id",
+                        "components": [
+                            {"type": "BODY", "text": "Page one body", "example": {"body_text": [["Ada"]]}},
+                        ],
+                    }
+                ],
+                "paging": {"next": page_two_url},
+            },
+            {
+                "data": [
+                    {
+                        "name": "test_tmpl_page2",
+                        "status": "APPROVED",
+                        "language": "en",
+                        "category": "UTILITY",
+                        "id": "page2_tmpl_id",
+                        "components": [
+                            {"type": "BODY", "text": "Page two body", "example": {"body_text": [["Grace"]]}},
+                        ],
+                    },
+                    {
+                        "name": "test_tmpl_page2b",
+                        "status": "APPROVED",
+                        "language": "en",
+                        "category": "UTILITY",
+                        "id": "page2b_tmpl_id",
+                        "components": [
+                            {"type": "BODY", "text": "Page two b body", "example": {"body_text": [["Lin"]]}},
+                        ],
+                    },
+                ],
+            },
+        ]
+
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import fetch
+        result = fetch()
+        self.assertEqual(result, "Successfully fetched templates from meta")
+
+        # Initial request + one pagination request
+        self.assertEqual(mock_get.call_count, 2)
+
+        # Second call must use the paging.next URL from the first response
+        second_call_url = mock_get.call_args_list[1][0][1]
+        self.assertEqual(second_call_url, page_two_url)
+
+        # Auth headers must be forwarded on the pagination request
+        second_call_headers = mock_get.call_args_list[1][1].get("headers", {})
+        self.assertIn("authorization", second_call_headers)
+
+        # Templates from both pages must be imported
+        self.assertTrue(frappe.db.exists("WhatsApp Templates", {"actual_name": "test_tmpl_page1"}))
+        self.assertTrue(frappe.db.exists("WhatsApp Templates", {"actual_name": "test_tmpl_page2"}))
+        self.assertTrue(frappe.db.exists("WhatsApp Templates", {"actual_name": "test_tmpl_page2b"}))
+
     def test_parse_remote_named_body_rejects_duplicate_and_inconsistent_examples(self):
         from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import parse_remote_body
 
