@@ -22,6 +22,10 @@
   "message_type",
   "message_id",
   "conversation_id",
+  "section_break_delivery_error",
+  "error_code",
+  "error_title",
+  "error_message",
   "content_type",
   "attach",
   "buttons",
@@ -135,6 +139,30 @@
    "fieldname": "conversation_id",
    "fieldtype": "Data",
    "label": "Conversation ID",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_delivery_error",
+   "fieldtype": "Section Break",
+   "label": "Delivery Error Details"
+  },
+  {
+   "fieldname": "error_code",
+   "fieldtype": "Data",
+   "label": "Error Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_title",
+   "fieldtype": "Data",
+   "label": "Error Title",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Small Text",
+   "label": "Error Message",
    "read_only": 1
   },
   {

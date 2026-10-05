@@ -55,6 +55,23 @@ class TestWebhookHelpers(IntegrationTestCase):
             frappe.delete_doc("WhatsApp Notification Log", name, force=True)
         frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
 
+    def _create_status_message(self, message_id, **extra_fields):
+        fields = {
+            "doctype": "WhatsApp Message",
+            "type": "Outgoing",
+            "to": "919900112233",
+            "message": "Status test",
+            "message_id": message_id,
+            "content_type": "text",
+            "whatsapp_account": "Test WA Webhook Account",
+        }
+        fields.update(extra_fields)
+        msg = frappe.get_doc(fields)
+        msg.flags.ignore_validate = True
+        msg.db_insert()
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+        return msg
+
     def test_update_status_template_status(self):
         """Test update_status routes to template status update."""
         data = {
@@ -121,6 +138,90 @@ class TestWebhookHelpers(IntegrationTestCase):
 
         msg.reload()
         self.assertEqual(msg.status, "sent")
+
+    def test_update_message_status_persists_error_and_details(self):
+        """Meta failure details are stored together for Desk inspection."""
+        msg = self._create_status_message("wamid.webhook_error_details")
+
+        update_message_status({
+            "statuses": [{
+                "id": msg.message_id,
+                "status": "failed",
+                "errors": [{
+                    "code": 131047,
+                    "title": "Re-engagement message",
+                    "message": "Message failed to send",
+                    "error_data": {"details": "Outside the allowed time window"},
+                }],
+            }],
+        })
+
+        msg.reload()
+        self.assertEqual(msg.status, "failed")
+        self.assertEqual(msg.error_code, "131047")
+        self.assertEqual(msg.error_title, "Re-engagement message")
+        self.assertEqual(
+            msg.error_message,
+            "Message failed to send\nOutside the allowed time window",
+        )
+
+    def test_update_message_status_uses_details_without_message(self):
+        """Useful error_data.details is retained if Meta omits message text."""
+        msg = self._create_status_message("wamid.webhook_error_details_only")
+
+        update_message_status({
+            "statuses": [{
+                "id": msg.message_id,
+                "status": "failed",
+                "errors": [{
+                    "code": 131047,
+                    "title": "Re-engagement message",
+                    "error_data": {"details": "Outside the allowed time window"},
+                }],
+            }],
+        })
+
+        msg.reload()
+        self.assertEqual(msg.error_message, "Outside the allowed time window")
+
+    def test_update_message_status_failed_without_errors(self):
+        """A failure status without an errors array remains safe to process."""
+        msg = self._create_status_message("wamid.webhook_failed_no_errors")
+
+        update_message_status({
+            "statuses": [{"id": msg.message_id, "status": "failed"}],
+        })
+
+        msg.reload()
+        self.assertEqual(msg.status, "failed")
+        self.assertFalse(msg.error_code)
+        self.assertFalse(msg.error_title)
+        self.assertFalse(msg.error_message)
+
+    def test_update_message_status_success_clears_stale_error(self):
+        """A succeeding status clears failure details from an earlier callback."""
+        msg = self._create_status_message(
+            "wamid.webhook_error_cleared",
+            status="failed",
+            error_code="131047",
+            error_title="Previous failure",
+            error_message="Previous failure details",
+        )
+
+        update_message_status({
+            "statuses": [{
+                "id": msg.message_id,
+                "status": "delivered",
+                "conversation": {"id": "conv_error_cleared"},
+            }],
+        })
+
+        msg.reload()
+        self.assertEqual(msg.status, "delivered")
+        self.assertEqual(msg.conversation_id, "conv_error_cleared")
+        self.assertFalse(msg.error_code)
+        self.assertFalse(msg.error_title)
+        self.assertFalse(msg.error_message)
 
     def test_update_template_status(self):
         """Test update_template_status updates template status via SQL."""
