@@ -1,10 +1,10 @@
-# Tasks: Explicit WhatsApp Template Parameter Formats
+﻿# Tasks: Explicit WhatsApp Template Parameter Formats
 
 ## Review Workload Forecast
 
 | Field | Value |
 |-------|-------|
-| Estimated changed lines | 550–800 authored additions + deletions |
+| Estimated changed lines | 550â€“800 authored additions + deletions |
 | 400-line budget risk | High |
 | Chained PRs recommended | Yes |
 | Suggested split | PR 1: persisted format and local create/update validation; PR 2: fetch/sync preservation and diagnostics; PR 3: message serialization and notification guard |
@@ -30,29 +30,29 @@ All focused commands require an initialized Frappe bench, `test_site`, MariaDB, 
 
 ## Phase 1: Template Fields and Local Contracts
 
-- [ ] 1.1 Add `parameter_format`, `named_field_mapping`, and `named_example_values` to `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/whatsapp_templates.json`, preserving the existing `for_doctype`, `field_names`, and `sample_values` fields and treating an empty legacy format as `POSITIONAL` without writeback.
-- [ ] 1.2 Add shared format, placeholder, JSON-object, duplicate-key, and template validation helpers in `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/whatsapp_templates.py`; validate first-occurrence unique named identities, numeric positional indexes, stale/duplicate/missing values, malformed placeholders, and unsupported formats without relying on JSON object order.
-- [ ] 1.3 Add format-specific BODY example construction to local create/update paths in `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/whatsapp_templates.py`; named examples use one `body_text_named_params` entry per unique variable, while positional examples keep the existing `body_text` shape. Preserve the current header/footer/button construction and validate before Meta I/O.
-- [ ] 1.4 Extend `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/test_whatsapp_templates.py` to assert default/explicit format behavior, repeated-variable collapse, malformed and duplicate JSON rejection, named example persistence and payload shape, positional compatibility, and unchanged header/button payloads using mocked Meta requests.
+- [x] 1.1 Add `parameter_format`, `named_field_mapping`, and `named_example_values` to `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/whatsapp_templates.json`, preserving the existing `for_doctype`, `field_names`, and `sample_values` fields and treating an empty legacy format as `POSITIONAL` without writeback.
+- [x] 1.2 Add shared format, placeholder, JSON-object, duplicate-key, and template validation helpers in `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/whatsapp_templates.py`; validate first-occurrence unique named identities, numeric positional indexes, stale/duplicate/missing values, malformed placeholders, and unsupported formats without relying on JSON object order.
+- [x] 1.3 Add format-specific BODY example construction to local create/update paths in `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/whatsapp_templates.py`; named examples use one `body_text_named_params` entry per unique variable, while positional examples keep the existing `body_text` shape. Preserve the current header/footer/button construction and validate before Meta I/O.
+- [x] 1.4 Extend `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/test_whatsapp_templates.py` to assert default/explicit format behavior, repeated-variable collapse, malformed and duplicate JSON rejection, named example persistence and payload shape, positional compatibility, and unchanged header/button payloads using mocked Meta requests.
 
 ## Phase 2: Fetch and Synchronization Safety
 
-- [ ] 2.1 In `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/whatsapp_templates.py`, parse and validate remote format and BODY example data before `upsert_doc_without_hooks()`; treat an absent remote format as legacy `POSITIONAL` and report unknown formats or inconsistent examples as actionable invalid state.
-- [ ] 2.2 Preserve existing local `named_field_mapping` and `for_doctype` by variable identity during fetch/sync in `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/whatsapp_templates.py`; retain recoverable remote body/format/examples with stale bindings flagged for correction, and do not overwrite a prior valid local record when remote structure is unusable.
-- [ ] 2.3 Extend `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/test_whatsapp_templates.py` with mocked fetch insert/update coverage for reordered variables, matching and inconsistent examples, missing/unsupported format, duplicate definitions, stale bindings, per-template diagnostics, and proof that import validation runs despite hook-free upsert.
+- [x] 2.1 In `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/whatsapp_templates.py`, parse and validate remote format and BODY example data before `upsert_doc_without_hooks()`; treat an absent remote format as legacy `POSITIONAL` and report unknown formats or inconsistent examples as actionable invalid state.
+- [x] 2.2 Preserve existing local `named_field_mapping` and `for_doctype` by variable identity during fetch/sync in `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/whatsapp_templates.py`; retain recoverable remote body/format/examples with stale bindings flagged for correction, and do not overwrite a prior valid local record when remote structure is unusable.
+- [x] 2.3 Extend `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_templates/test_whatsapp_templates.py` with mocked fetch insert/update coverage for reordered variables, matching and inconsistent examples, missing/unsupported format, duplicate definitions, stale bindings, per-template diagnostics, and proof that import validation runs despite hook-free upsert.
 - [ ] 2.4 Record the live Meta named-example and update-format verification outcome before rollout; a controlled non-production round-trip is required to establish API acceptance, and if unavailable or unsuccessful named creation/sending must remain unavailable rather than being reported as accepted.
 
 ## Phase 3: Outbound Message Serialization
 
-- [ ] 3.1 Update `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_message/whatsapp_message.py` to load the template's effective explicit format and prepare body parameters from parsed placeholder identities; named values include `parameter_name`, repeated occurrences reuse one value, and positional values follow numeric placeholder order.
-- [ ] 3.2 Reject malformed JSON, unknown named identities, and absent or blank required named values before `notify()` or HTTP dispatch in `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_message/whatsapp_message.py`; do not use `named_field_mapping` to resolve CRM/reference fields or treat examples as send defaults.
-- [ ] 3.3 Extend `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_message/test_whatsapp_message.py` to cover named and repeated values, reversed positional input order, absent legacy format, pre-dispatch rejection, serialized `template_parameters`, and unchanged header/static/dynamic button behavior.
+- [x] 3.1 Update `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_message/whatsapp_message.py` to load the template's effective explicit format and prepare body parameters from parsed placeholder identities; named values include `parameter_name`, repeated occurrences reuse one value, and positional values follow numeric placeholder order.
+- [x] 3.2 Reject malformed JSON, unknown named identities, and absent or blank required named values before `notify()` or HTTP dispatch in `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_message/whatsapp_message.py`; do not use `named_field_mapping` to resolve CRM/reference fields or treat examples as send defaults.
+- [x] 3.3 Extend `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_message/test_whatsapp_message.py` to cover named and repeated values, reversed positional input order, absent legacy format, pre-dispatch rejection, serialized `template_parameters`, and unchanged header/static/dynamic button behavior.
 
 ## Phase 4: Notification Boundary and Regression Verification
 
-- [ ] 4.1 Reject explicit `NAMED` templates at the start of `send_simple_template()` and `send_template_message()` in `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_notification/whatsapp_notification.py`, before payload construction or dispatch; keep positional field-row handling unchanged, including scheduled routes that call these methods.
-- [ ] 4.2 Extend `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_notification/test_whatsapp_notification.py` to assert named rejection with zero `notify()` calls for simple, dynamic, and scheduled routes, plus unchanged positional notification behavior.
-- [ ] 4.3 Run focused template, message, and notification tests and the configured full app suite from an initialized bench; record unavailable infrastructure honestly. Do not treat mocked tests as proof of Meta acceptance, and keep production named-template enablement blocked until the live API prerequisite is satisfied.
+- [x] 4.1 Reject explicit `NAMED` templates at the start of `send_simple_template()` and `send_template_message()` in `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_notification/whatsapp_notification.py`, before payload construction or dispatch; keep positional field-row handling unchanged, including scheduled routes that call these methods.
+- [x] 4.2 Extend `frappe_whatsapp/frappe_whatsapp/doctype/whatsapp_notification/test_whatsapp_notification.py` to assert named rejection with zero `notify()` calls for simple, dynamic, and scheduled routes, plus unchanged positional notification behavior.
+- [x] 4.3 Run focused template, message, and notification tests and the configured full app suite from an initialized bench; record unavailable infrastructure honestly. Do not treat mocked tests as proof of Meta acceptance, and keep production named-template enablement blocked until the live API prerequisite is satisfied.
 
 ## Key Learnings
 
