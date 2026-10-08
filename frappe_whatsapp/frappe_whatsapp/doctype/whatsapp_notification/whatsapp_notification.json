@@ -61,7 +61,7 @@
    "fieldname": "doctype_event",
    "fieldtype": "Select",
    "label": "DocType Event",
-   "options": "Before Insert\nBefore Validate\nBefore Save\nAfter Insert\nAfter Save\nBefore Submit\nAfter Submit\nBefore Cancel\nAfter Cancel\nBefore Delete\nAfter Delete\nBefore Save (Submitted Document)\nAfter Save (Submitted Document)\nDays After\nDays Before"
+   "options": "Before Insert\nBefore Validate\nBefore Save\nAfter Insert\nAfter Save\nBefore Submit\nAfter Submit\nBefore Cancel\nAfter Cancel\nBefore Delete\nAfter Delete\nBefore Save (Submitted Document)\nAfter Save (Submitted Document)\nDays After\nDays Before\nMinutes After"
   },
   {
    "fieldname": "column_break_3",
@@ -189,19 +189,19 @@
    "label": "Value To Be Set"
   },
   {
-   "depends_on": "eval:doc.doctype_event==='Days Before' || doc.doctype_event==='Days After'",
-   "description": "Send days before or after the reference date",
+   "depends_on": "eval:doc.doctype_event==='Days Before' || doc.doctype_event==='Days After' || doc.doctype_event==='Minutes After'",
+   "description": "Delay in days for Days Before/Days After, or minutes for Minutes After",
    "fieldname": "days_in_advance",
    "fieldtype": "Int",
-   "label": "Days Before or After",
-   "mandatory_depends_on": "eval:doc.doctype_event==='Days Before' || doc.doctype_event==='Days After'"
+   "label": "Delay",
+   "mandatory_depends_on": "eval:doc.doctype_event==='Days Before' || doc.doctype_event==='Days After' || doc.doctype_event==='Minutes After'"
   },
   {
-   "depends_on": "eval:doc.doctype_event==='Days Before' || doc.doctype_event==='Days After'",
+   "depends_on": "eval:doc.doctype_event==='Days Before' || doc.doctype_event==='Days After' || doc.doctype_event==='Minutes After'",
    "fieldname": "date_changed",
    "fieldtype": "Select",
-   "label": "Reference Date",
-   "mandatory_depends_on": "eval:doc.doctype_event==='Days Before' || doc.doctype_event==='Days After'"
+   "label": "Reference Date/Time",
+   "mandatory_depends_on": "eval:doc.doctype_event==='Days Before' || doc.doctype_event==='Days After' || doc.doctype_event==='Minutes After'"
   },
   {
    "fieldname": "notification_name",

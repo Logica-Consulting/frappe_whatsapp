@@ -1,5 +1,6 @@
 """Notification."""
 
+import hashlib
 import json
 import frappe
 
@@ -8,7 +9,9 @@ from frappe.model.document import Document
 from frappe.utils.safe_exec import get_safe_globals, safe_exec
 from frappe.integrations.utils import make_post_request
 from frappe.desk.form.utils import get_pdf_link
-from frappe.utils import add_to_date, nowdate, datetime
+from datetime import timedelta
+
+from frappe.utils import add_to_date, nowdate, now_datetime, cint, datetime
 
 from frappe_whatsapp.utils import get_whatsapp_account
 from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import effective_parameter_format
@@ -359,6 +362,45 @@ class WhatsAppNotification(Document):
 
         return number
 
+    def get_documents_after_minutes(self):
+        """Send due documents delayed by minutes, with catch-up and dedupe."""
+        due_before = (now_datetime() - timedelta(minutes=cint(self.days_in_advance))).replace(
+            second=0, microsecond=0
+        ) + timedelta(minutes=1)
+        due_after = due_before - timedelta(hours=1)
+
+        doc_list = frappe.get_all(
+            self.reference_doctype,
+            fields="name",
+            filters=[
+                {self.date_changed: (">=", due_after)},
+                {self.date_changed: ("<", due_before)},
+            ],
+        )
+
+        for d in doc_list:
+            doc = frappe.get_doc(self.reference_doctype, d.name)
+            self.send_minutes_after_once(doc)
+
+    def send_minutes_after_once(self, doc):
+        """Send a Minutes After notification once per source document."""
+        marker_name = self.get_minutes_after_marker_name(doc.name)
+        if frappe.db.exists("WhatsApp Notification Log", marker_name):
+            return
+
+        self.send_template_message(doc)
+        frappe.get_doc({
+            "doctype": "WhatsApp Notification Log",
+            "name": marker_name,
+            "template": self.template,
+            "meta_data": {"notification": self.name, "reference_name": doc.name, "doctype_event": "Minutes After"},
+        }).insert(ignore_permissions=True)
+
+    def get_minutes_after_marker_name(self, docname):
+        """Build a stable delivery marker name for Minutes After dedupe."""
+        key = f"{self.name or ''}|{self.reference_doctype or ''}|{docname or ''}|{self.date_changed or ''}|{cint(self.days_in_advance)}"
+        return "WA-MIN-AFTER-" + hashlib.sha256(key.encode()).hexdigest()[:48]
+
     def get_documents_for_today(self):
         """get list of documents that will be triggered today"""
         docs = []
@@ -397,6 +439,20 @@ def call_trigger_notifications():
         frappe.log_error(frappe.get_traceback(), "Error in call_trigger_notifications")
         # Optionally, you could raise the exception to be handled elsewhere if needed
         raise e
+
+def trigger_notifications_minutely():
+    """Process notifications delayed by a configured number of minutes."""
+    if frappe.flags.in_import or frappe.flags.in_patch:
+        return
+
+    doc_list = frappe.get_all(
+        "WhatsApp Notification",
+        filters={"doctype_event": "Minutes After", "disabled": 0},
+    )
+    for d in doc_list:
+        alert = frappe.get_doc("WhatsApp Notification", d.name)
+        alert.get_documents_after_minutes()
+
 
 def trigger_notifications(method="daily"):
     if frappe.flags.in_import or frappe.flags.in_patch:

@@ -275,6 +275,53 @@ class TestWhatsAppNotification(IntegrationTestCase):
         result = doc.send_template_message(user)
         self.assertIsNone(result)
 
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.frappe.get_doc")
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.frappe.get_all")
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.now_datetime")
+    def test_minutes_after_selects_due_catchup_window(self, mock_now, mock_get_all, mock_get_doc):
+        from datetime import datetime
+
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification import WhatsAppNotification
+
+        mock_now.return_value = datetime(2025, 1, 2, 12, 34, 45)
+        mock_get_all.return_value = [frappe._dict(name="USER-001")]
+        source_doc = MagicMock()
+        mock_get_doc.return_value = source_doc
+        notification = frappe.new_doc("WhatsApp Notification")
+        notification.reference_doctype = "User"
+        notification.date_changed = "creation"
+        notification.days_in_advance = 5
+        notification.send_minutes_after_once = MagicMock()
+
+        WhatsAppNotification.get_documents_after_minutes(notification)
+
+        mock_get_all.assert_called_once_with(
+            "User",
+            fields="name",
+            filters=[
+                {"creation": (">=", datetime(2025, 1, 2, 11, 30))},
+                {"creation": ("<", datetime(2025, 1, 2, 12, 30))},
+            ],
+        )
+        notification.send_minutes_after_once.assert_called_once_with(source_doc)
+
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.frappe.get_doc")
+    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.frappe.get_all")
+    def test_minutely_scheduler_routes_minutes_after_notifications(self, mock_get_all, mock_get_doc):
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification import trigger_notifications_minutely
+
+        mock_get_all.return_value = [frappe._dict(name="Test Minutes Notification")]
+        alert = MagicMock()
+        mock_get_doc.return_value = alert
+
+        trigger_notifications_minutely()
+
+        mock_get_all.assert_called_once_with(
+            "WhatsApp Notification",
+            filters={"doctype_event": "Minutes After", "disabled": 0},
+        )
+        alert.get_documents_after_minutes.assert_called_once_with()
+
     def test_scheduler_event_notification(self):
         """Test creating a scheduler event notification."""
         doc = frappe.get_doc({
