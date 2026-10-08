@@ -322,9 +322,7 @@ class TestWhatsAppNotification(IntegrationTestCase):
         )
         alert.get_documents_after_minutes.assert_called_once_with()
 
-    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.frappe.get_doc")
-    @patch("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.frappe.db.exists")
-    def test_minutes_after_uses_delivery_key_for_dedupe(self, mock_exists, mock_get_doc):
+    def test_minutes_after_uses_delivery_key_for_dedupe(self):
         notification = frappe.new_doc("WhatsApp Notification")
         notification.name = "Test Minutes Notification"
         notification.reference_doctype = "User"
@@ -334,10 +332,17 @@ class TestWhatsAppNotification(IntegrationTestCase):
         notification.send_template_message = MagicMock()
         source_doc = frappe._dict(name="USER-001")
         marker_doc = MagicMock()
-        mock_get_doc.return_value = marker_doc
-        mock_exists.return_value = None
 
-        notification.send_minutes_after_once(source_doc)
+        with patch(
+            "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification"
+            ".whatsapp_notification.frappe.db.exists",
+            return_value=None,
+        ) as mock_exists, patch(
+            "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification"
+            ".whatsapp_notification.frappe.get_doc",
+            return_value=marker_doc,
+        ) as mock_get_doc:
+            notification.send_minutes_after_once(source_doc)
 
         delivery_key = notification.get_minutes_after_delivery_key("USER-001")
         mock_exists.assert_called_once_with("WhatsApp Notification Log", {"delivery_key": delivery_key})
@@ -346,9 +351,17 @@ class TestWhatsAppNotification(IntegrationTestCase):
         self.assertEqual(mock_get_doc.call_args.args[0]["delivery_key"], delivery_key)
 
         notification.send_template_message.reset_mock()
-        mock_get_doc.reset_mock()
-        mock_exists.return_value = "LOG-001"
-        notification.send_minutes_after_once(source_doc)
+        marker_doc.reset_mock()
+        with patch(
+            "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification"
+            ".whatsapp_notification.frappe.db.exists",
+            return_value="LOG-001",
+        ), patch(
+            "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification"
+            ".whatsapp_notification.frappe.get_doc",
+        ) as mock_get_doc:
+            notification.send_minutes_after_once(source_doc)
+
         notification.send_template_message.assert_not_called()
         mock_get_doc.assert_not_called()
 
