@@ -1,0 +1,36 @@
+name: Trigger CRM Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [master]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch frappe_whatsapp deploy
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Trigger crm-deploy
+        env:
+          GH_TOKEN: ${{ secrets.CRM_DEPLOY_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "Missing CRM_DEPLOY_DISPATCH_TOKEN secret"
+            exit 1
+          fi
+
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /repos/Logica-Consulting/crm-deploy/dispatches \
+            -f event_type=frappe_whatsapp \
+            -F client_payload[repository]="${{ github.repository }}" \
+            -F client_payload[branch]="${{ github.event.workflow_run.head_branch }}" \
+            -F client_payload[sha]="${{ github.event.workflow_run.head_sha }}" \
+            -F client_payload[run_id]="${{ github.event.workflow_run.id }}"
