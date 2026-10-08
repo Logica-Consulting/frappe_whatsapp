@@ -265,11 +265,14 @@ class TestBulkMessagingUtils(IntegrationTestCase):
             frappe.db.get_value("Bulk WhatsApp Message", doc.name, "status"),
             "Scheduled",
         )
+        error_logs = frappe.get_all(
+            "Error Log",
+            filters={"error": ["like", f"%{doc.name}%"]},
+            fields=["error"],
+            limit=1,
+        )
         self.assertTrue(
-            frappe.get_all(
-                "Error Log",
-                filters={"error": ["like", f"%{doc.name}%"]},
-                limit=1,
-            ),
+            error_logs,
             "failure was swallowed without an Error Log entry",
         )
+        self.assertIn("enqueue blew up", error_logs[0].error)

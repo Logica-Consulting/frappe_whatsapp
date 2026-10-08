@@ -62,7 +62,11 @@ def process_scheduled_bulk_messages():
             # the remaining campaigns (and so log_error can write).
             frappe.db.rollback()
             frappe.log_error(
-                title=f"Bulk WhatsApp Message scheduling failed: {name}"
+                message=(
+                    f"Bulk WhatsApp Message {name} scheduling failed.\n\n"
+                    f"{frappe.get_traceback()}"
+                ),
+                title=f"Bulk WhatsApp Message scheduling failed: {name}",
             )
 
 
