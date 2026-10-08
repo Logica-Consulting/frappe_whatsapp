@@ -384,20 +384,20 @@ class WhatsAppNotification(Document):
 
     def send_minutes_after_once(self, doc):
         """Send a Minutes After notification once per source document."""
-        marker_name = self.get_minutes_after_marker_name(doc.name)
-        if frappe.db.exists("WhatsApp Notification Log", marker_name):
+        delivery_key = self.get_minutes_after_delivery_key(doc.name)
+        if frappe.db.exists("WhatsApp Notification Log", {"delivery_key": delivery_key}):
             return
 
         self.send_template_message(doc)
         frappe.get_doc({
             "doctype": "WhatsApp Notification Log",
-            "name": marker_name,
+            "delivery_key": delivery_key,
             "template": self.template,
             "meta_data": {"notification": self.name, "reference_name": doc.name, "doctype_event": "Minutes After"},
         }).insert(ignore_permissions=True)
 
-    def get_minutes_after_marker_name(self, docname):
-        """Build a stable delivery marker name for Minutes After dedupe."""
+    def get_minutes_after_delivery_key(self, docname):
+        """Build a stable delivery key for Minutes After dedupe."""
         key = f"{self.name or ''}|{self.reference_doctype or ''}|{docname or ''}|{self.date_changed or ''}|{cint(self.days_in_advance)}"
         return "WA-MIN-AFTER-" + hashlib.sha256(key.encode()).hexdigest()[:48]
 

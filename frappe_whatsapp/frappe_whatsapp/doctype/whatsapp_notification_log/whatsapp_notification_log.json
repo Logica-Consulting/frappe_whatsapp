@@ -7,6 +7,7 @@
  "engine": "InnoDB",
  "field_order": [
   "template",
+  "delivery_key",
   "meta_data"
  ],
  "fields": [
@@ -14,6 +15,12 @@
    "fieldname": "template",
    "fieldtype": "Data",
    "label": "Template"
+  },
+  {
+   "fieldname": "delivery_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Delivery Key"
   },
   {
    "fieldname": "meta_data",
